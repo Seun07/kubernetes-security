@@ -1,0 +1,262 @@
+# kubernetes-rbac
+kubernetes rbac configuration is done to help with access control and permission of any staff all done within the aws infrastructure and ecosytem.
+
+ ## PROJECT: AWS AUTHOURIZATION FOR A USER USING KUBERNETES RBAC CONFIGURATION 
+
+  ################## Create AWS EKS clsuster ################################
+
+## Pre-requisite links
+  https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html
+
+## Pre-requisite links
+  https://docs.aws.amazon.com/eks/latest/userguide/getting-started-eksctl.html
+
+#If this your first time of installing this on aws linux instance, remove the preinstalled yum version on it
+
+$sudo yum remove aws cli
+
+
+# install eksctl
+
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+
+sudo mv /tmp/eksctl /usr/local/bin
+
+eksctl version
+#==================================
+## install aws cli
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" 
+sudo apt install unzip 
+unzip awscliv2.zip 
+sudo ./aws/install
+
+#check the version
+
+aws --version
+#======================================
+#now check if you have kubectl on your machine, run the command below
+$kubectl version
+$kubectl version --client
+
+#if not exist the install kubectl on linux used the link #below
+
+https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/#install-kubectl-binary-with-curl-on-linux
+
+
+#give permissions to kubectl
+
+chmod +x kubectl
+
+#Move the kubectl into the usr/local/bin
+$mv kubectl /usr/local/bin
+
+#verfy the installation of kubectl
+
+$kubectl version
+
+#or if the above does not installed
+
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+kubectl version
+#====================================
+
+
+## Create EKS cluster
+  eksctl create cluster --name eks-cluster-204 --node-type t2.large --nodes 1 --nodes-min 1 --nodes-max 2 --region eu-west-2
+
+## Get EKS Cluster service
+eksctl get cluster --name eks-cluster-204 --region eu-west-2
+
+## Get EKS Pod data.
+kubectl get pods --all-namespaces
+
+## Delete EKS cluster
+eksctl delete cluster --name eks-cluster-204 --region eu-west-2
+
+####################################################################################################################
+
+#################### EKS Cluster RBACs #############################################################################
+# kubernetes-rbac
+kubernetes rbac configuration is done to help with access control and permission of any staff all done within the aws infrastructure and ecosytem
+
+## first create the rbac-test namespace, and then install nginx into it
+kubectl create namespace rbac-test
+
+## Deploy nginx pod on clsuster
+kubectl create deploy nginx --image=nginx -n rbac-test
+
+## To verify the test pods were properly installed
+kubectl get all -n rbac-test
+## get status of the ngnx pod
+
+kubectl get pods -n rbac-test 
+
+# ==========================================
+## Create IAM user and create access key
+aws iam create-user --user-name rbac-user
+
+
+# once user was created creates access key
+
+aws iam create-access-key --user-name rbac-user
+
+#now IAM user created but does not have acess to kubenetes RBAC
+
+### Now log into the terminal where u are not the admin and
+ ### use the newly generated Iam accesskey and secret to authenticate into aws
+
+aws configure
+
+
+# after the above run to the below to confirm if authenticated in aws for rbac-user
+aws sts get caller-identity
+{
+    "UserId": "",
+    "Account": "",
+    "Arn": "arn:aws:iam::user/rbac-user"
+}
+
+## We will use these set another context with using above credentials
+AWS configure.
+
+## But first create a configMap of the user
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-auth
+  namespace: kube-system
+data:
+  mapUsers: |
+    - userarn: arn:aws:iam::759623136685:user/rbac-user
+      username: rbac-user
+
+## MAP AN IAM USER TO K8S
+kubectl apply -f aws-auth.yaml --validate=false
+kubectl apply -f ./aws-auth.yaml
+
+# when u run the below command you get the error
+kubectl apply -f ./aws-auth.yaml
+error: error validating "./aws-auth.yaml": error validating data: failed to
+ download openapi: the server has asked for the client to provide credentials;
+ if you choose to ignore these errors, turn validation off with --validate=false
+
+# clear you must login again in the terminal with the admin credentials by running the command below
+
+aws configure
+
+#after run the below command to confirm your indenity
+
+aws sts get-caller-identity 
+
+# now run kubectl apply -f ./aws-auth.yaml
+
+Warning: resource configmaps/aws-auth is missing the
+ kubectl.kubernetes.io/last-applied-configuration annotation which is required by
+  kubectl apply. kubectl apply should only be used on resources created declaratively 
+  by either kubectl create --save-config or kubectl apply.
+   The missing annotation will be patched automatically.
+configmap/aws-auth configured
+
+#now login into the terminal as rbac-user by runing the command below
+
+aws configure
+
+# after run the below command to confirm your indenity
+
+aws sts get-caller-identity 
+
+
+## Verify newly created user after login AND it should throw below errors
+kubectl get pods -n rbac-test
+## error: You must be logged in to the server (Unauthorized)-----this
+ one use case that proves that a user without administratieve access cannot come and 
+#do stuffs
+
+# now log in with your administrative access
+aws configure
+
+
+# now run the aws sts-get-caller-identity
+
+# Now run the command
+kubectl get pods -n rbac-test
+NAME                    READY   STATUS    RESTARTS   AGE
+nginx-bf5d5cf98-gdhrp   1/1     Running   0          138m
+
+# the above shows the point we are talking about by default 
+the rbac-user gets the inheritance and get the administrative priviledge
+
+## Create a role within the rbac-test namespace from Admin access
+
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  namespace: rbac-test
+  name: pod-reader
+rules:
+- apiGroups: [""] # "" indicates the core API group
+  resources: ["pods"]
+  verbs: ["list","get","watch"]
+- apiGroups: ["extensions","apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+
+kubectl apply -f ./rbacuser-role.yaml
+
+### Create a rolebinding within the rbac-test namespace from Admin access
+
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: read-pods
+  namespace: rbac-test
+subjects:
+- kind: User
+  name: rbac-user
+  apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+
+kubectl apply -f ./rbacuser-role-binding.yaml
+
+rolebinding.rbac.authorization.k8s.io/read-pods created
+
+## login with Kubernetes rbac-user again
+using below command and with its accesskey and secret key
+ aws configure
+
+ ## confirm it is rbac-user
+ aws sts get-caller-identity
+
+
+## Verify newly created user after login AND it should Not throw any errors
+kubectl get pods -n rbac-test                
+NAME                    READY   STATUS    RESTARTS   AGE
+nginx-bf5d5cf98-gdhrp   1/1     Running   0          3h52m
+
+## Now Verify newly created rbac-user after does not have access in another name space except that created for it  AND it should throw errors
+kubectl get pods -n kube-system
+
+kubectl get deployment -n rbac-test
+NAME    READY   UP-TO-DATE   AVAILABLE   AGE
+nginx   1/1     1            1           3h54m
+
+kubectl describe pod nginx-bf5d5
+
+kubectl describe pod nginx-bf5d5cf98-gdhrp -n rbac-test 
+Name:             nginx-bf5d5cf98-gdhrp
+Namespace:        rbac-test
+Priority:         0
+
+
+
+# now if the same user tries to do anything in another namespace like kube-system he will not be permitted, 
+ ### this is how we restrict users in a big kubernetes team.
+This is how roles and and rolebinding are done called Role based access configuration
+####################################################################################################################
